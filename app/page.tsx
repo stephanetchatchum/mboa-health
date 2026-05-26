@@ -31,6 +31,8 @@ const HANDOFF_TITLE = { en: 'Health worker summary', fr: "Résumé pour l'agent 
 const COPY_LABEL = { en: 'Copy', fr: 'Copier' };
 const COPIED_LABEL = { en: 'Copied ✓', fr: 'Copié ✓' };
 const GENERATING_LABEL = { en: 'Generating...', fr: 'Génération...' };
+const MIC_HINT = { en: 'Tap to speak', fr: 'Appuie pour parler' };
+const LISTENING_HINT = { en: 'Listening...', fr: "Je t'écoute..." };
 
 function detectTriage(text: string) {
   for (const t of Object.values(TRIAGE)) if (t.regex.test(text)) return t;
@@ -41,10 +43,22 @@ function detectLang(text: string): 'fr' | 'en' {
   return /\b(le|la|les|de|du|des|et|est|tu|vous|ça|maintenant|au|pour|avec|dans|son|sa|mon|ma|ton|ta)\b/i.test(text) ? 'fr' : 'en';
 }
 
+function stripForSpeech(text: string): string {
+  return text
+    .replace(/\*\*/g, '')
+    .replace(/\*/g, '')
+    .replace(/[🔴🟡🟢🧡💚❤️💛🩷]/g, '')
+    .replace(/^[-•]\s+/gm, '')
+    .replace(/^#{1,6}\s+/gm, '')
+    .replace(/_{1,2}/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 export default function Chat() {
   const [messages, setMessages] = useState<Message[]>([{
     role: 'assistant',
-    content: "Hello, I'm MBOA Health. I help caregivers know when a child under five needs medical attention. You can write to me in English, French, or Kinyarwanda. What's happening?"
+    content: "Hello, I'm MBOA Health. I help caregivers know when a child under five needs medical attention. You can write or speak in English or French — and I understand when you mix languages. What's happening?"
   }]);
   const [input, setInput] = useState('');
   const [streaming, setStreaming] = useState(false);
@@ -52,11 +66,28 @@ export default function Chat() {
   const [summary, setSummary] = useState<string | null>(null);
   const [summaryLoading, setSummaryLoading] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [recording, setRecording] = useState(false);
+  const [speechLang, setSpeechLang] = useState<'fr' | 'en'>('en');
+  const [speakingId, setSpeakingId] = useState<number | null>(null);
+  const [speechSupported, setSpeechSupported] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const recognitionRef = useRef<any>(null);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
   }, [messages]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (SR) {
+      setSpeechSupported(true);
+      const recognition = new SR();
+      recognition.continuous = false;
+      recognition.interimResults = true;
+      recognitionRef.current = recognition;
+    }
+  }, []);
 
   async function send() {
     if (!input.trim() || streaming) return;
@@ -126,6 +157,55 @@ export default function Chat() {
     window.open(url, '_blank');
   }
 
+  function toggleRecording() {
+    if (!recognitionRef.current) {
+      alert('Voice input is not supported in this browser. Try Chrome or Edge.');
+      return;
+    }
+    if (recording) {
+      recognitionRef.current.stop();
+      setRecording(false);
+      return;
+    }
+    recognitionRef.current.lang = speechLang === 'fr' ? 'fr-FR' : 'en-US';
+    recognitionRef.current.onresult = (event: any) => {
+      const transcript = Array.from(event.results)
+        .map((result: any) => result[0].transcript)
+        .join('');
+      setInput(transcript);
+    };
+    recognitionRef.current.onend = () => setRecording(false);
+    recognitionRef.current.onerror = () => setRecording(false);
+    try {
+      recognitionRef.current.start();
+      setRecording(true);
+    } catch (e) {
+      setRecording(false);
+    }
+  }
+
+  function speak(text: string, idx: number) {
+    if (typeof window === 'undefined' || !('speechSynthesis' in window)) {
+      alert('Voice output is not supported in this browser.');
+      return;
+    }
+    if (speakingId === idx) {
+      window.speechSynthesis.cancel();
+      setSpeakingId(null);
+      return;
+    }
+    const clean = stripForSpeech(text);
+    const utterance = new SpeechSynthesisUtterance(clean);
+    const msgLang = detectLang(text);
+    utterance.lang = msgLang === 'fr' ? 'fr-FR' : 'en-US';
+    utterance.rate = 0.95;
+    utterance.onend = () => setSpeakingId(null);
+    utterance.onerror = () => setSpeakingId(null);
+    window.speechSynthesis.cancel();
+    window.speechSynthesis.speak(utterance);
+    setSpeakingId(idx);
+  }
+
   const lastAssistant = [...messages].reverse().find(m => m.role === 'assistant');
   const triage = lastAssistant ? detectTriage(lastAssistant.content) : null;
   const lang = lastAssistant ? detectLang(lastAssistant.content) : 'en';
@@ -159,7 +239,7 @@ export default function Chat() {
 
         <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-3 space-y-3">
           {messages.map((m, i) => (
-            <div key={i} className={'flex ' + (m.role === 'user' ? 'justify-end' : 'justify-start')}>
+            <div key={i} className={'flex flex-col ' + (m.role === 'user' ? 'items-end' : 'items-start')}>
               <div className={'max-w-[80%] px-4 py-2.5 rounded-2xl leading-relaxed ' + (m.role === 'user' ? 'bg-[#2E7D52] text-white rounded-br-md whitespace-pre-wrap' : 'bg-[#C8E6D4] text-[#1A1A2E] rounded-bl-md')}>
                 {m.role === 'user' ? (
                   m.content
@@ -178,22 +258,57 @@ export default function Chat() {
                   </ReactMarkdown>
                 )}
               </div>
+              {m.role === 'assistant' && m.content && !(streaming && i === messages.length - 1) && (
+                <button
+                  onClick={() => speak(m.content, i)}
+                  className="text-xs mt-1 ml-2 opacity-60 hover:opacity-100 transition font-medium text-[#2E7D52]"
+                  title="Read aloud"
+                >
+                  {speakingId === i ? '🔇 Stop' : '🔊 Listen'}
+                </button>
+              )}
             </div>
           ))}
         </div>
 
-        <div className="p-3 border-t border-[#E8ECEF] flex gap-2 sticky bottom-0 bg-white">
-          <input
-            value={input}
-            onChange={e => setInput(e.target.value)}
-            onKeyDown={e => e.key === 'Enter' && send()}
-            placeholder="Describe what's happening with the child..."
-            disabled={streaming}
-            className="flex-1 px-4 py-3 rounded-2xl border border-[#E8ECEF] focus:outline-none focus:border-[#2E7D52] text-[#1A1A2E]"
-          />
-          <button onClick={send} disabled={streaming || !input.trim()} className="bg-[#2E7D52] text-white px-5 rounded-2xl font-semibold disabled:opacity-50">
-            Send
-          </button>
+        <div className="px-3 pt-2 pb-3 border-t border-[#E8ECEF] sticky bottom-0 bg-white space-y-2">
+          {recording && (
+            <div className="text-center text-xs text-red-600 font-semibold animate-pulse">
+              🎤 {LISTENING_HINT[speechLang]}
+            </div>
+          )}
+          <div className="flex gap-2 items-center">
+            {speechSupported && (
+              <>
+                <button
+                  onClick={() => setSpeechLang(l => l === 'fr' ? 'en' : 'fr')}
+                  className="text-xs font-bold text-[#2E7D52] px-2 py-1 rounded-lg bg-[#EAF3EE] shrink-0"
+                  title="Switch voice language"
+                >
+                  {speechLang === 'fr' ? 'FR' : 'EN'}
+                </button>
+                <button
+                  onClick={toggleRecording}
+                  disabled={streaming}
+                  className={'w-11 h-11 rounded-full grid place-items-center transition shrink-0 ' + (recording ? 'bg-red-500 animate-pulse text-white' : 'bg-[#EAF3EE] hover:bg-[#C8E6D4] text-[#2E7D52]')}
+                  title={MIC_HINT[speechLang]}
+                >
+                  <span className="text-lg">🎤</span>
+                </button>
+              </>
+            )}
+            <input
+              value={input}
+              onChange={e => setInput(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && send()}
+              placeholder={recording ? LISTENING_HINT[speechLang] : "Describe what's happening with the child..."}
+              disabled={streaming}
+              className="flex-1 px-4 py-3 rounded-2xl border border-[#E8ECEF] focus:outline-none focus:border-[#2E7D52] text-[#1A1A2E]"
+            />
+            <button onClick={send} disabled={streaming || !input.trim()} className="bg-[#2E7D52] text-white px-5 rounded-2xl font-semibold disabled:opacity-50">
+              Send
+            </button>
+          </div>
         </div>
 
         {showSummary && (
