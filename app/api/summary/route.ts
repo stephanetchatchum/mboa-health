@@ -21,16 +21,23 @@ Rules:
 - Use plain text only — no asterisks, no markdown
 - Be clinical but warm
 - If the caregiver mentioned anything important not in the structured fields, add it as a short note at the end
+- If the caregiver shared a photo, mention briefly what was visible (e.g., "Photo showed a red rash on chest")
 - Write in the same language as the conversation`;
 
 export async function POST(req: Request) {
   const { messages } = await req.json();
 
+  // Strip image data — summary is generated from text context only
+  const textMessages = messages.map((m: any) => ({
+    role: m.role,
+    content: m.content || (m.image ? '[Caregiver sent a photo]' : ''),
+  }));
+
   const response = await anthropic.messages.create({
     model: 'claude-sonnet-4-6',
     max_tokens: 400,
     messages: [
-      ...messages,
+      ...textMessages,
       { role: 'user', content: SUMMARY_INSTRUCTION }
     ],
   });

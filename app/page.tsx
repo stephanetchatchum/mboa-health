@@ -2,7 +2,7 @@
 import { useState, useRef, useEffect } from 'react';
 import ReactMarkdown from 'react-markdown';
 
-type Message = { role: 'user' | 'assistant'; content: string };
+type Message = { role: 'user' | 'assistant'; content: string; image?: string };
 
 const TRIAGE = {
   red: {
@@ -33,6 +33,10 @@ const COPIED_LABEL = { en: 'Copied ✓', fr: 'Copié ✓' };
 const GENERATING_LABEL = { en: 'Generating...', fr: 'Génération...' };
 const MIC_HINT = { en: 'Tap to speak', fr: 'Appuie pour parler' };
 const LISTENING_HINT = { en: 'Listening...', fr: "Je t'écoute..." };
+const PLACEHOLDER = { en: "Describe what's happening...", fr: "Décris ce qui se passe..." };
+const PLACEHOLDER_IMG = { en: 'Add a message (optional)...', fr: 'Ajoute un message (facultatif)...' };
+const IMG_ATTACHED = { en: 'Image attached', fr: 'Image jointe' };
+const IMG_TOO_LARGE = { en: 'Image too large (max 5MB)', fr: 'Image trop grande (max 5 Mo)' };
 
 function detectTriage(text: string) {
   for (const t of Object.values(TRIAGE)) if (t.regex.test(text)) return t;
@@ -58,7 +62,7 @@ function stripForSpeech(text: string): string {
 export default function Chat() {
   const [messages, setMessages] = useState<Message[]>([{
     role: 'assistant',
-    content: "Hello, I'm MBOA Health. I help caregivers know when a child under five needs medical attention. You can write or speak in English or French — and I understand when you mix languages. What's happening?"
+    content: "Hello, I'm MBOA Health. I help caregivers know when a child under five needs medical attention. You can write, speak, or send a photo — in English or French. What's happening?"
   }]);
   const [input, setInput] = useState('');
   const [streaming, setStreaming] = useState(false);
@@ -70,8 +74,10 @@ export default function Chat() {
   const [speechLang, setSpeechLang] = useState<'fr' | 'en'>('en');
   const [speakingId, setSpeakingId] = useState<number | null>(null);
   const [speechSupported, setSpeechSupported] = useState(false);
+  const [image, setImage] = useState<{ dataUrl: string; mediaType: string } | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const recognitionRef = useRef<any>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
@@ -89,11 +95,36 @@ export default function Chat() {
     }
   }, []);
 
+  function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.size > 5 * 1024 * 1024) {
+      alert(IMG_TOO_LARGE[lang]);
+      e.target.value = '';
+      return;
+    }
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      setImage({
+        dataUrl: reader.result as string,
+        mediaType: file.type || 'image/jpeg',
+      });
+    };
+    reader.readAsDataURL(file);
+    e.target.value = '';
+  }
+
   async function send() {
-    if (!input.trim() || streaming) return;
-    const newMessages: Message[] = [...messages, { role: 'user', content: input }];
+    if ((!input.trim() && !image) || streaming) return;
+    const userMessage: Message = {
+      role: 'user',
+      content: input || (image ? (lang === 'fr' ? 'Regarde cette image.' : 'Please look at this image.') : ''),
+      image: image?.dataUrl,
+    };
+    const newMessages: Message[] = [...messages, userMessage];
     setMessages(newMessages);
     setInput('');
+    setImage(null);
     setStreaming(true);
 
     try {
@@ -138,7 +169,7 @@ export default function Chat() {
       const data = await res.json();
       setSummary(data.summary);
     } catch (err) {
-      setSummary("Sorry, something went wrong. Try again.");
+      setSummary('Sorry, something went wrong. Try again.');
     } finally {
       setSummaryLoading(false);
     }
@@ -185,10 +216,7 @@ export default function Chat() {
   }
 
   function speak(text: string, idx: number) {
-    if (typeof window === 'undefined' || !('speechSynthesis' in window)) {
-      alert('Voice output is not supported in this browser.');
-      return;
-    }
+    if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
     if (speakingId === idx) {
       window.speechSynthesis.cancel();
       setSpeakingId(null);
@@ -241,6 +269,9 @@ export default function Chat() {
           {messages.map((m, i) => (
             <div key={i} className={'flex flex-col ' + (m.role === 'user' ? 'items-end' : 'items-start')}>
               <div className={'max-w-[80%] px-4 py-2.5 rounded-2xl leading-relaxed ' + (m.role === 'user' ? 'bg-[#2E7D52] text-white rounded-br-md whitespace-pre-wrap' : 'bg-[#C8E6D4] text-[#1A1A2E] rounded-bl-md')}>
+                {m.image && (
+                  <img src={m.image} alt="" className="max-w-full rounded-xl mb-2 max-h-64 object-contain" />
+                )}
                 {m.role === 'user' ? (
                   m.content
                 ) : (
@@ -277,35 +308,67 @@ export default function Chat() {
               🎤 {LISTENING_HINT[speechLang]}
             </div>
           )}
+          {image && (
+            <div className="flex items-center gap-2 p-2 bg-[#EAF3EE] rounded-xl">
+              <img src={image.dataUrl} alt="" className="w-12 h-12 object-cover rounded-lg" />
+              <span className="flex-1 text-xs text-[#4A5568] font-medium">{IMG_ATTACHED[lang]}</span>
+              <button
+                onClick={() => setImage(null)}
+                className="text-2xl text-[#4A5568] hover:text-red-500 px-2 leading-none"
+              >
+                ×
+              </button>
+            </div>
+          )}
+          <input
+            type="file"
+            accept="image/jpeg,image/png,image/gif,image/webp"
+            capture="environment"
+            ref={fileInputRef}
+            onChange={handleFileChange}
+            className="hidden"
+          />
           <div className="flex gap-2 items-center">
             {speechSupported && (
-              <>
-                <button
-                  onClick={() => setSpeechLang(l => l === 'fr' ? 'en' : 'fr')}
-                  className="text-xs font-bold text-[#2E7D52] px-2 py-1 rounded-lg bg-[#EAF3EE] shrink-0"
-                  title="Switch voice language"
-                >
-                  {speechLang === 'fr' ? 'FR' : 'EN'}
-                </button>
-                <button
-                  onClick={toggleRecording}
-                  disabled={streaming}
-                  className={'w-11 h-11 rounded-full grid place-items-center transition shrink-0 ' + (recording ? 'bg-red-500 animate-pulse text-white' : 'bg-[#EAF3EE] hover:bg-[#C8E6D4] text-[#2E7D52]')}
-                  title={MIC_HINT[speechLang]}
-                >
-                  <span className="text-lg">🎤</span>
-                </button>
-              </>
+              <button
+                onClick={() => setSpeechLang(l => l === 'fr' ? 'en' : 'fr')}
+                className="text-xs font-bold text-[#2E7D52] px-2 py-1 rounded-lg bg-[#EAF3EE] shrink-0"
+                title="Switch voice language"
+              >
+                {speechLang === 'fr' ? 'FR' : 'EN'}
+              </button>
             )}
+            {speechSupported && (
+              <button
+                onClick={toggleRecording}
+                disabled={streaming}
+                className={'w-11 h-11 rounded-full grid place-items-center transition shrink-0 ' + (recording ? 'bg-red-500 animate-pulse text-white' : 'bg-[#EAF3EE] hover:bg-[#C8E6D4] text-[#2E7D52]')}
+                title={MIC_HINT[speechLang]}
+              >
+                <span className="text-lg">🎤</span>
+              </button>
+            )}
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              disabled={streaming}
+              className="w-11 h-11 rounded-full grid place-items-center transition shrink-0 bg-[#EAF3EE] hover:bg-[#C8E6D4] text-[#2E7D52]"
+              title="Send photo"
+            >
+              <span className="text-lg">📷</span>
+            </button>
             <input
               value={input}
               onChange={e => setInput(e.target.value)}
               onKeyDown={e => e.key === 'Enter' && send()}
-              placeholder={recording ? LISTENING_HINT[speechLang] : "Describe what's happening with the child..."}
+              placeholder={recording ? LISTENING_HINT[speechLang] : (image ? PLACEHOLDER_IMG[lang] : PLACEHOLDER[lang])}
               disabled={streaming}
-              className="flex-1 px-4 py-3 rounded-2xl border border-[#E8ECEF] focus:outline-none focus:border-[#2E7D52] text-[#1A1A2E]"
+              className="flex-1 px-4 py-3 rounded-2xl border border-[#E8ECEF] focus:outline-none focus:border-[#2E7D52] text-[#1A1A2E] min-w-0"
             />
-            <button onClick={send} disabled={streaming || !input.trim()} className="bg-[#2E7D52] text-white px-5 rounded-2xl font-semibold disabled:opacity-50">
+            <button
+              onClick={send}
+              disabled={streaming || (!input.trim() && !image)}
+              className="bg-[#2E7D52] text-white px-5 rounded-2xl font-semibold disabled:opacity-50 shrink-0"
+            >
               Send
             </button>
           </div>
