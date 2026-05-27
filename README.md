@@ -1,36 +1,66 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# MBOA Health
 
-## Getting Started
+MBOA Health is a small Next.js app that helps caregivers assess illnesses in children under five. It provides two server endpoints used by the frontend to interact with Anthropic's Claude model: a streaming chat endpoint and a structured summary endpoint.
 
-First, run the development server:
+**Requirements**
+- **Node.js** (16+ recommended)
+- An Anthropic API key set in the environment as `ANTHROPIC_API_KEY`.
+
+## Install & Run
+
+Install and run the dev server:
 
 ```bash
+npm install
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open http://localhost:3000 in your browser.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## API Endpoints
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+- **POST** `/api/chat` — chat streaming endpoint
+	- Request body: `{"messages": [{"role": "user|assistant", "content": string, "image?:": string}]}`
+	- Images: if a caregiver sends an image, include a data URL in `image` (e.g. `data:image/jpeg;base64,...`). The server splits the data URL at the first comma and submits the base64 payload alongside the text.
+	- Response: a `text/plain` streaming response with the assistant's text (the route streams Anthropic `messages.stream`). See [app/api/chat/route.ts](app/api/chat/route.ts) for implementation.
 
-## Learn More
+- **POST** `/api/summary` — structured handoff summary
+	- Request body: same `messages` array.
+	- Response: JSON `{ "summary": "..." }` containing a short, IMCI-based handoff message suitable for sending to a community health worker. See [app/api/summary/route.ts](app/api/summary/route.ts).
 
-To learn more about Next.js, take a look at the following resources:
+## Example requests
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+Chat (streaming):
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+```bash
+curl -N -X POST http://localhost:3000/api/chat \
+	-H "Content-Type: application/json" \
+	-d '{"messages":[{"role":"user","content":"My 2-year-old has a fever and a rash"}]}'
+```
 
-## Deploy on Vercel
+Summary (single response):
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+```bash
+curl -X POST http://localhost:3000/api/summary \
+	-H "Content-Type: application/json" \
+	-d '{"messages":[{"role":"user","content":"My baby has had fever for two days"}]}'
+```
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## Important files
+- [app/api/chat/route.ts](app/api/chat/route.ts) — streaming chat integration with Anthropic.
+- [app/api/summary/route.ts](app/api/summary/route.ts) — summary generation integration.
+- [app/lib/system-prompt.ts](app/lib/system-prompt.ts) — the assistant's system prompt (triage rules, language guidance, and privacy constraints).
+
+## Environment
+Set your Anthropic API key before running locally:
+
+```bash
+export ANTHROPIC_API_KEY=sk-...    # macOS / Linux
+setx ANTHROPIC_API_KEY "sk-..."  # Windows (then restart shell)
+```
+
+## Notes
+- The service intentionally does not collect names or other identifiers — only the child's age is requested when needed.
+- The chat route handles images by accepting base64 data URLs and submitting them to Anthropic alongside the text.
+
+If you'd like, I can also add a short example frontend curl script or a Postman collection for testing.

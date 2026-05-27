@@ -8,15 +8,15 @@ const SUMMARY_INSTRUCTION = `Based on our conversation above, generate a brief, 
 
 Format (use this exact structure, in the same language as the conversation):
 
-[Child's name], [age]
+Child, [age]
 - [Duration]: [main symptom]
 - [Other key symptoms, one per line]
 - Assessment: [Triage level — explain in 1 short line]
-- Location: [if known, else omit]
 
 Sent via MBOA Health · Not a diagnosis · WHO IMCI-based
 
 Rules:
+- DO NOT include the child's name, the caregiver's name, or any other personal identifier — we deliberately do not collect them. Just "Child" with age.
 - Keep under 80 words total
 - Use plain text only — no asterisks, no markdown
 - Be clinical but warm
@@ -27,7 +27,6 @@ Rules:
 export async function POST(req: Request) {
   const { messages } = await req.json();
 
-  // Strip image data — summary is generated from text context only
   const textMessages = messages.map((m: any) => ({
     role: m.role,
     content: m.content || (m.image ? '[Caregiver sent a photo]' : ''),
